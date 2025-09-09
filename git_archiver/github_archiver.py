@@ -273,44 +273,57 @@ class GitHubArchiver(BaseArchiver):
         self.log.info(f"  Project archive downloaded for {repo_info['name']}")
 
 
-def main():
+def main(config=None, args=None):
     """Main function to run the GitHub archiver."""
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="UTC %(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler("github_archiver.log"),
-            logging.StreamHandler(),
-        ],
-    )
-    logging.Formatter.converter = time.gmtime
+    from .config import ConfigManager
+    import argparse
+    
+    # Use provided config or create new one
+    if config is None:
+        config = ConfigManager()
+    
     log = logging.getLogger()
     
-    # Get configuration from environment
-    access_token = os.environ.get("GITHUB_API_TOKEN")
-    org_name = os.environ.get("GITHUB_ORG_NAME")
-    repositories = os.environ.get("GITHUB_REPOSITORIES")
+    # Get GitHub configuration
+    github_config = config.get_section('github')
+    access_token = github_config.get('api_token')
+    org_name = github_config.get('org_name')
+    repositories = github_config.get('repositories')
+    export_path = github_config.get('export_path', 'exports/github')
     
     if not access_token or not org_name:
-        log.error("GITHUB_API_TOKEN and GITHUB_ORG_NAME environment variables are required")
+        log.error("GitHub API token and organization name are required")
+        log.error("Set them in config.json, environment variables, or command line arguments")
         return
     
     # Parse repository filter
     repo_filter = None
     if repositories:
         repositories = repositories.strip().replace(",", " ").replace(";", " ")
-        repo_filter = repositories.split()
-        log.info(f"Filtering by repositories: {repo_filter}")
+        repo_filter = [r for r in repositories.split() if r]
+        if repo_filter:
+            log.info(f"Filtering by repositories: {repo_filter}")
+    
+    # Check for dry run
+    dry_run = getattr(args, 'dry_run', False) if args else False
+    if dry_run:
+        log.info("DRY RUN MODE - No actual operations will be performed")
     
     # Initialize archiver
     archiver = GitHubArchiver(access_token, org_name)
-    export_path = archiver.generate_export_path()
-    archiver.ensure_directory_exists(export_path)
+    
+    # Use configured export path
+    full_export_path = export_path
+    archiver.ensure_directory_exists(full_export_path)
+    log.info(f"Export path: {full_export_path}")
     
     # Get repositories
     repos = []
     try:
+        if dry_run:
+            log.info("Would fetch repositories from GitHub API...")
+            return
+        
         repos_raw = archiver.get_repositories()
         for repo in repos_raw:
             # Filter repositories
@@ -350,15 +363,15 @@ def main():
                     repos.pop(i)
                 elif status == "exported":
                     try:
-                        archiver.download_repository_archive(r, export_path)
-                        archiver.download_export(r, export_path)
+                        archiver.download_repository_archive(r, full_export_path)
+                        archiver.download_export(r, full_export_path)
                         archiver.unlock_repository(r)
                         repos.pop(i)
                     except Exception as e:
                         log.error(f"Error downloading {r['name']}: {e}")
                         archiver.unlock_repository(r)
                         repos.pop(i)
-            time.sleep(1)
+            time.sleep(github_config.get('retry_delay', 1))
     
     finally:
         # Ensure all repositories are unlocked

@@ -158,41 +158,52 @@ class GitLabArchiver(BaseArchiver):
             self.log.error("  Download of repository archive failed!")
 
 
-def main():
+def main(config=None, args=None):
     """Main function to run the GitLab archiver."""
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="UTC %(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler("gitlab_archiver.log"),
-            logging.StreamHandler(),
-        ],
-    )
-    logging.Formatter.converter = time.gmtime
+    from .config import ConfigManager
+    import argparse
+    
+    # Use provided config or create new one
+    if config is None:
+        config = ConfigManager()
+    
     log = logging.getLogger()
     
-    # Get configuration from environment
-    access_token = os.environ.get("GITLAB_API_TOKEN")
-    group_id = os.environ.get("GITLAB_GROUP_ID")
-    repositories = os.environ.get("GITLAB_REPOSITORIES")
+    # Get GitLab configuration
+    gitlab_config = config.get_section('gitlab')
+    access_token = gitlab_config.get('api_token')
+    gitlab_url = gitlab_config.get('gitlab_url', 'https://gitlab.com')
+    group_id = gitlab_config.get('group_id')
+    repositories = gitlab_config.get('repositories')
+    export_path = gitlab_config.get('export_path', 'exports/gitlab')
     
     if not access_token or not group_id:
-        log.error("GITLAB_API_TOKEN and GITLAB_GROUP_ID environment variables are required")
+        log.error("GitLab API token and group ID are required")
+        log.error("Set them in config.json, environment variables, or command line arguments")
         return
     
     # Parse repository filter
     repo_filter = None
     if repositories:
         repositories = repositories.strip().replace(",", " ").replace(";", " ")
-        repo_filter = repositories.split()
-        log.info(f"Filtering by repositories: {repo_filter}")
+        repo_filter = [r for r in repositories.split() if r]
+        if repo_filter:
+            log.info(f"Filtering by repositories: {repo_filter}")
+    
+    # Check for dry run
+    dry_run = getattr(args, 'dry_run', False) if args else False
+    if dry_run:
+        log.info("DRY RUN MODE - No actual operations will be performed")
     
     # Initialize archiver
-    archiver = GitLabArchiver(access_token)
+    archiver = GitLabArchiver(access_token, gitlab_url)
     
     log.info("-" * 80)
-    log.info("Authenticating to GitLab...")
+    log.info(f"Authenticating to GitLab at {gitlab_url}...")
+    
+    if dry_run:
+        log.info("Would authenticate and fetch projects...")
+        return
     
     log.info("-" * 80)
     log.info(f"Starting export of projects in group {group_id}")
@@ -224,9 +235,8 @@ def main():
         
         log.info(f"Processing {project['name']} ({project['name_with_namespace']} - {project['id']})")
         
-        # Create directory using standardized path structure
-        base_export_path = archiver.generate_export_path()
-        project_path = os.path.join(base_export_path, project['name_with_namespace'])
+        # Create directory using configured export path
+        project_path = os.path.join(export_path, project['name_with_namespace'])
         archiver.ensure_directory_exists(project_path)
         log.info(f"  Exporting to {project_path}")
         
@@ -236,6 +246,11 @@ def main():
             archiver.download_repository_archive(project, project_path)
         except Exception as e:
             log.error(f"Error processing {project['name']}: {e}")
+        
+        # Add delay between projects if configured
+        retry_delay = gitlab_config.get('retry_delay', 1)
+        if retry_delay > 0:
+            time.sleep(retry_delay)
     
     log.info("Done!")
 

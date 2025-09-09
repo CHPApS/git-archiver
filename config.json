@@ -1,0 +1,33 @@
+{
+  "github": {
+    "api_token": "",
+    "org_name": "",
+    "repositories": "",
+    "export_path": "exports/github",
+    "per_page": 100,
+    "retry_delay": 1
+  },
+  "gitlab": {
+    "api_token": "",
+    "gitlab_url": "https://gitlab.com",
+    "group_id": "",
+    "repositories": "",
+    "export_path": "exports/gitlab",
+    "retry_delay": 1
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "UTC %(asctime)s [%(levelname)s] %(message)s",
+    "file_enabled": true,
+    "console_enabled": true
+  },
+  "archive": {
+    "base_export_path": "exports",
+    "create_directories": true,
+    "naming_convention": {
+      "export_format": "export_{name}_{id}_{version}",
+      "repository_format": "repository_archive_{name}_{id}_{sha}",
+      "sanitize_names": true
+    }
+  }
+}
