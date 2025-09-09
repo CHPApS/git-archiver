@@ -8,6 +8,8 @@ A comprehensive tool for archiving repositories from GitHub and GitLab with stan
 - **Standardized Archive Naming**: Consistent naming patterns across platforms
 - **Flexible Configuration**: Configuration file, environment variables, and command-line arguments
 - **Priority-Based Settings**: Clear override hierarchy with warnings
+- **Archive Rotation**: Intelligent backup rotation with configurable retention policies
+- **Disk Space Monitoring**: Automatic cleanup when running low on storage
 - **Dry Run Mode**: Test operations without making actual changes
 - **Comprehensive Logging**: Structured logging with UTC timestamps
 
@@ -105,6 +107,15 @@ poetry run python -m git_archiver github --dry-run
       "repository_format": "repository_archive_{name}_{id}_{sha}",
       "sanitize_names": true
     }
+  },
+  "retention": {
+    "enable_rotation": true,
+    "max_archives_per_repo": 5,
+    "max_age_days": 30,
+    "min_free_space_gb": 10,
+    "cleanup_threshold_gb": 5,
+    "cleanup_before_download": true,
+    "cleanup_after_download": false
   }
 }
 ```
@@ -121,6 +132,7 @@ poetry run python -m git_archiver github --dry-run
 | `GITLAB_URL` | GitLab instance URL | GitLab |
 | `GITLAB_REPOSITORIES` | Comma-separated repository filter | GitLab |
 | `LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | Global |
+| `GIT_ARCHIVER_CONFIG` | Path to configuration file | Global |
 
 ## Usage Examples
 
@@ -165,6 +177,86 @@ poetry run python -m git_archiver github --log-level DEBUG
 
 # Use custom configuration file
 poetry run python -m git_archiver --config-file custom-config.json github
+
+# Archive rotation and retention
+poetry run python -m git_archiver github --max-archives 3 --max-age-days 14
+poetry run python -m git_archiver github --force-cleanup
+poetry run python -m git_archiver github --no-rotation
+```
+
+## Archive Rotation & Retention
+
+The tool includes intelligent archive rotation to manage disk space and maintain a clean archive history.
+
+### Retention Policies
+
+- **Archive Count Limit**: Maximum number of archives per repository
+- **Age-Based Cleanup**: Remove archives older than specified days
+- **Disk Space Monitoring**: Automatic cleanup when free space is low
+- **Aggressive Cleanup**: More aggressive removal when critically low on space
+
+### Retention Configuration
+
+```json
+{
+  "retention": {
+    "enable_rotation": true,
+    "max_archives_per_repo": 5,
+    "max_age_days": 30,
+    "min_free_space_gb": 10,
+    "cleanup_threshold_gb": 5,
+    "cleanup_before_download": true,
+    "cleanup_after_download": false
+  }
+}
+```
+
+### Retention Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `enable_rotation` | Enable/disable archive rotation | `true` |
+| `max_archives_per_repo` | Maximum archives to keep per repository | `5` |
+| `max_age_days` | Maximum age of archives in days | `30` |
+| `min_free_space_gb` | Minimum free space before cleanup (GB) | `10` |
+| `cleanup_threshold_gb` | Aggressive cleanup threshold (GB) | `5` |
+| `cleanup_before_download` | Clean up before downloading new archives | `true` |
+| `cleanup_after_download` | Clean up after downloading new archives | `false` |
+
+### Retention CLI Arguments
+
+```bash
+# Override retention settings
+poetry run python -m git_archiver github --max-archives 3
+poetry run python -m git_archiver github --max-age-days 14
+poetry run python -m git_archiver github --min-free-space 5.0
+poetry run python -m git_archiver github --cleanup-threshold 2.0
+
+# Force cleanup regardless of disk space
+poetry run python -m git_archiver github --force-cleanup
+
+# Disable rotation for this run
+poetry run python -m git_archiver github --no-rotation
+```
+
+### Archive Management Commands
+
+```bash
+# Manual cleanup of archives
+poetry run python -m git_archiver config --cleanup exports/github
+
+# Show retention summary
+poetry run python -m git_archiver config --retention-summary exports/github
+
+# Example output:
+# Retention Summary for: exports/github
+#   Total Archives: 15
+#   Total Repositories: 3
+#   Total Size: 245.7MB
+#   Oldest Archive: 25.3 days
+#   Newest Archive: 0.1 days
+#   Disk Usage: 125.4GB used, 89.2GB free
+#   Low Space Warning: No
 ```
 
 ## Archive Naming Convention
@@ -248,6 +340,19 @@ poetry run python -m git_archiver github --log-level DEBUG --verbose
 # Check if configuration is valid
 poetry run python -m git_archiver config --validate github
 poetry run python -m git_archiver config --show-config
+```
+
+### Archive Management
+
+```bash
+# Check current archive status
+poetry run python -m git_archiver config --retention-summary exports/github
+
+# Clean up old archives manually
+poetry run python -m git_archiver config --cleanup exports/github
+
+# Archive with custom retention
+poetry run python -m git_archiver github --max-archives 2 --max-age-days 7
 ```
 
 ## License
