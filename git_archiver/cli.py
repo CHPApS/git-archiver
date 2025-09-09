@@ -322,8 +322,13 @@ def main() -> None:
             from .github_archiver import main as github_main
             github_main(config, args)
         elif args.platform == 'gitlab':
-            from .gitlab_archiver import main as gitlab_main
-            gitlab_main(config, args)
+            try:
+                from .gitlab_archiver import main as gitlab_main
+                gitlab_main(config, args)
+            except ImportError as e:
+                logging.error(f"GitLab functionality not available: {e}")
+                logging.error("Install python-gitlab with: poetry add python-gitlab")
+                sys.exit(1)
     
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")

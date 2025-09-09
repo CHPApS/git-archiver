@@ -1,9 +1,18 @@
 import os
 import time
 import logging
-import gitlab
-from typing import Dict, Any, List
+from typing import Dict, Any, List, TYPE_CHECKING
 from .base_archiver import BaseArchiver
+
+try:
+    import gitlab
+    GITLAB_AVAILABLE = True
+except ImportError:
+    GITLAB_AVAILABLE = False
+    gitlab = None
+
+if TYPE_CHECKING:
+    from gitlab import Gitlab
 
 
 class GitLabArchiver(BaseArchiver):
@@ -19,16 +28,27 @@ class GitLabArchiver(BaseArchiver):
             access_token: GitLab API token with appropriate scopes
             gitlab_url: GitLab instance URL (default: https://gitlab.com)
         """
+        if not GITLAB_AVAILABLE:
+            raise ImportError(
+                "python-gitlab package is required for GitLab functionality. "
+                "Install it with: poetry add python-gitlab"
+            )
+        
         super().__init__("gitlab")
         self.access_token = access_token
         self.gitlab_url = gitlab_url
-        self.gl: gitlab.Gitlab = None  # type: ignore
+        self.gl: 'Gitlab' = None  # type: ignore
         self._authenticated = False
     
     def _ensure_authenticated(self):
         """Ensure GitLab client is authenticated."""
         if not self._authenticated:
-            self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.access_token)
+            if not GITLAB_AVAILABLE:
+                raise ImportError(
+                    "python-gitlab package is required for GitLab functionality. "
+                    "Install it with: poetry add python-gitlab"
+                )
+            self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.access_token)  # type: ignore
             self.gl.auth()
             self._authenticated = True
     
