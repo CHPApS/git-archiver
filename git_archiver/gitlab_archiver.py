@@ -2,101 +2,99 @@ import os
 import time
 import logging
 import gitlab
+from typing import Dict, Any, List
+from .base_archiver import BaseArchiver
 
 
-def recurse_groups_for_projects(group_id):
-    group = gl.groups.get(group_id)
-    projects = []
-    log.info(f"  Fetching groups for group: {group.attributes['full_name']}")
-    subgroups = group.subgroups.list(all=True)
-    if len(subgroups) > 0:
-        for subgroup in subgroups:
-            projects += recurse_groups_for_projects(subgroup.get_id())
-
-    group_projects = group.projects.list(get_all=True)
-
-    projects += [
-        {
-            "name": p.attributes["name"].replace(" ", ""),
-            "name_with_namespace": p.attributes["name_with_namespace"].replace(" ", ""),
-            "id": p.attributes["id"],
-        }
-        for p in group_projects
-    ]
-
-    return projects
-
-if __name__ == "__main__":
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="UTC %(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler("gitlab_archiver.log"),  # Log to file
-            logging.StreamHandler(),  # Log to console
-        ],
-    )
-    logging.Formatter.converter = time.gmtime  # Use UTC time
-    log = logging.getLogger()  # Get root logger
-
-
-    log.info("-" * 80)
-    log.info("Authenticating to GitLab...")
-    access_token = os.environ.get("GITLAB_API_TOKEN")  # Needs "api" scope
-    gl = gitlab.Gitlab("https://gitlab.com", private_token=access_token)
-    gl.auth()
-
-
-    log.info("-" * 80)
-    group_id = os.environ.get("GITLAB_GROUP_ID")  # Can be name or ID
-    repositories = os.environ.get("GITLAB_REPOSITORIES")  # Get the repositories to archive
-    if repositories is not None:
-        repositories = repositories.strip()
-        repositories = repositories.replace(",", " ")
-        repositories = repositories.replace(";", " ")
-        repositories = repositories.split(" ")
+class GitLabArchiver(BaseArchiver):
+    """
+    GitLab-specific archiver that extends BaseArchiver with GitLab API functionality.
+    """
+    
+    def __init__(self, access_token: str, gitlab_url: str = "https://gitlab.com"):
+        """
+        Initialize the GitLab archiver.
         
-        log.info(f"Filtering by repositories: {repositories}")
-    log.info(f"Starting export of projects in group {group_id}")
-    log.info("Recursing groups to get projects: ")
-    projects = recurse_groups_for_projects(group_id)
-
-    log.info("-" * 80)
-    log.info("Projects found: ")
-    for project in projects:
-        print(f"  {project['name_with_namespace']} ({project['id']})")
-
-    log.info("-" * 80)
-    i = 0
-    total = len(projects)
-    digits = len(str(total))
-    for project in projects:
-        i += 1
-
-        # Log
-        log.info(f"Project {str(i).zfill(digits)}/{str(total)}")
-
-        # Filter repositories
-        if repositories is not None:
-            repo_in_filter = (str(project["name"]) in repositories) or (str(project["id"]) in repositories)
-            if repo_in_filter is False:
-                log.info(f"Skipping {project['name']} - not in filter")
-                continue
-        log.info(f"Processing {project['name']} ({project['name_with_namespace']} - {project['id']})")
-
-        # Create directory
-        path = os.path.join(os.getcwd(), f"exports/gitlab/{project['name_with_namespace']}")
-        os.makedirs(path, exist_ok=True)
-        log.info(f"  Exporting to {path}")
-
-        # Get project
-        p = gl.projects.get(project["id"])
-
-        # Trigger an export
-        # Contents: https://docs.gitlab.com/ee/user/project/settings/import_export.html#items-that-are-exported
-        log.info("  Triggering export...")
-        export = p.exports.create({})  # <-- Sends an email to the token owner
-
+        Args:
+            access_token: GitLab API token with appropriate scopes
+            gitlab_url: GitLab instance URL (default: https://gitlab.com)
+        """
+        super().__init__("gitlab")
+        self.access_token = access_token
+        self.gitlab_url = gitlab_url
+        self.gl: gitlab.Gitlab = None  # type: ignore
+        self._authenticated = False
+    
+    def _ensure_authenticated(self):
+        """Ensure GitLab client is authenticated."""
+        if not self._authenticated:
+            self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.access_token)
+            self.gl.auth()
+            self._authenticated = True
+    
+    def recurse_groups_for_projects(self, group_id) -> List[Dict[str, Any]]:
+        """
+        Recursively get all projects from a group and its subgroups.
+        
+        Args:
+            group_id: GitLab group ID or name
+            
+        Returns:
+            List of project information dictionaries
+        """
+        self._ensure_authenticated()
+        group = self.gl.groups.get(group_id)
+        projects = []
+        
+        self.log.info(f"  Fetching groups for group: {group.attributes['full_name']}")
+        subgroups = group.subgroups.list(all=True)
+        
+        if len(subgroups) > 0:
+            for subgroup in subgroups:
+                subgroup_id = subgroup.get_id()
+                if subgroup_id is not None:
+                    projects += self.recurse_groups_for_projects(subgroup_id)
+        
+        group_projects = group.projects.list(get_all=True)
+        
+        projects += [
+            {
+                "name": self._sanitize_name(p.attributes["name"]),
+                "name_with_namespace": self._sanitize_name(p.attributes["name_with_namespace"]),
+                "id": p.attributes["id"],
+            }
+            for p in group_projects
+        ]
+        
+        return projects
+    
+    def get_repositories(self) -> List[Dict[str, Any]]:
+        """
+        Get a list of repositories from the GitLab group.
+        This method is required by the base class but not used directly in GitLab workflow.
+        
+        Returns:
+            List of repository information dictionaries
+        """
+        # This method is implemented for base class compatibility
+        # but GitLab archiver uses recurse_groups_for_projects instead
+        return []
+    
+    def download_export(self, repo_info: Dict[str, Any], file_path: str) -> None:
+        """
+        Download the export archive for a repository.
+        
+        Args:
+            repo_info: Repository information dictionary
+            file_path: Directory path where the export should be saved
+        """
+        self._ensure_authenticated()
+        project_id = repo_info["id"]
+        project = self.gl.projects.get(project_id)
+        
+        self.log.info("  Triggering export...")
+        export = project.exports.create({})  # Sends an email to the token owner
+        
         # Wait for the operation to finish
         server_ready = False
         while not server_ready:
@@ -104,44 +102,143 @@ if __name__ == "__main__":
                 export.refresh()
                 server_ready = True
             except Exception as e:
-                print(e)
+                self.log.error(f"Error refreshing export status: {e}")
                 server_ready = False
+        
         # Check export status
-        log.info(f"  Export status: {export.export_status}")
+        self.log.info(f"  Export status: {export.export_status}")
         while export.export_status != "finished":
             time.sleep(1)
             export.refresh()
-            log.info(f"  Export status: {export.export_status}")
-
+            self.log.info(f"  Export status: {export.export_status}")
+        
+        # Generate standardized filename using base class method
+        gitlab_version = self.gl.version()[0]
+        file_name = self.generate_export_filename(repo_info, version=gitlab_version, extension="tgz")
+        full_path = os.path.join(file_path, file_name)
+        
         # Download the export
-        log.info("  Downloading and saving export...")
-        file = os.path.join(path, f"export_{p.name}_{p.id}_{gl.version()[0]}.tgz")
+        self.log.info("  Downloading and saving export...")
         try:
-            with open(
-                file,
-                "wb",
-            ) as f:
+            with open(full_path, "wb") as f:
                 export.download(streamed=True, action=f.write)
         except Exception as e:
-            log.error(e)
-            log.error("  Download of export failed!")
-
-        # Download the project as a repository archive
+            self.log.error(f"Error downloading export: {e}")
+            self.log.error("  Download of export failed!")
+    
+    def download_repository_archive(self, repo_info: Dict[str, Any], file_path: str, ref: str = "") -> None:
+        """
+        Download the repository archive for a repository.
+        
+        Args:
+            repo_info: Repository information dictionary
+            file_path: Directory path where the archive should be saved
+            ref: Reference (branch, tag, commit) to archive (not used in GitLab implementation)
+        """
+        self._ensure_authenticated()
+        project_id = repo_info["id"]
+        project = self.gl.projects.get(project_id)
+        
         # Get the latest commit SHA
-        commits = p.commits.list(per_page=1, get_all=False)
+        commits = project.commits.list(per_page=1, get_all=False)
         sha = commits[0].attributes["id"] if len(commits) > 0 else "null"
+        
+        # Generate standardized filename using base class method
+        file_name = self.generate_repository_archive_filename(repo_info, sha, extension="tgz")
+        full_path = os.path.join(file_path, file_name)
+        
         # Download the archive
-        log.info(f"  Downloading and saving repository archive (SHA: {sha})...")
-        file = os.path.join(path, f"repository_archive_{p.name}_{p.id}_{sha}.tgz")
+        self.log.info(f"  Downloading and saving repository archive (SHA: {sha})...")
         try:
-            tgz = p.repository_archive()
-            with open(
-                file,
-                "wb",
-            ) as f:
+            tgz = project.repository_archive()
+            with open(full_path, "wb") as f:
                 f.write(tgz)
         except Exception as e:
-            log.error(e)
-            log.error("  Download of repository archive failed!")
+            self.log.error(f"Error downloading repository archive: {e}")
+            self.log.error("  Download of repository archive failed!")
 
+
+def main():
+    """Main function to run the GitLab archiver."""
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="UTC %(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler("gitlab_archiver.log"),
+            logging.StreamHandler(),
+        ],
+    )
+    logging.Formatter.converter = time.gmtime
+    log = logging.getLogger()
+    
+    # Get configuration from environment
+    access_token = os.environ.get("GITLAB_API_TOKEN")
+    group_id = os.environ.get("GITLAB_GROUP_ID")
+    repositories = os.environ.get("GITLAB_REPOSITORIES")
+    
+    if not access_token or not group_id:
+        log.error("GITLAB_API_TOKEN and GITLAB_GROUP_ID environment variables are required")
+        return
+    
+    # Parse repository filter
+    repo_filter = None
+    if repositories:
+        repositories = repositories.strip().replace(",", " ").replace(";", " ")
+        repo_filter = repositories.split()
+        log.info(f"Filtering by repositories: {repo_filter}")
+    
+    # Initialize archiver
+    archiver = GitLabArchiver(access_token)
+    
+    log.info("-" * 80)
+    log.info("Authenticating to GitLab...")
+    
+    log.info("-" * 80)
+    log.info(f"Starting export of projects in group {group_id}")
+    log.info("Recursing groups to get projects: ")
+    projects = archiver.recurse_groups_for_projects(group_id)
+    
+    log.info("-" * 80)
+    log.info("Projects found: ")
+    for project in projects:
+        print(f"  {project['name_with_namespace']} ({project['id']})")
+    
+    log.info("-" * 80)
+    i = 0
+    total = len(projects)
+    digits = len(str(total))
+    
+    for project in projects:
+        i += 1
+        
+        # Log progress
+        log.info(f"Project {str(i).zfill(digits)}/{str(total)}")
+        
+        # Filter repositories
+        if repo_filter:
+            repo_in_filter = (str(project["name"]) in repo_filter) or (str(project["id"]) in repo_filter)
+            if not repo_in_filter:
+                log.info(f"Skipping {project['name']} - not in filter")
+                continue
+        
+        log.info(f"Processing {project['name']} ({project['name_with_namespace']} - {project['id']})")
+        
+        # Create directory using standardized path structure
+        base_export_path = archiver.generate_export_path()
+        project_path = os.path.join(base_export_path, project['name_with_namespace'])
+        archiver.ensure_directory_exists(project_path)
+        log.info(f"  Exporting to {project_path}")
+        
+        # Download export and repository archive
+        try:
+            archiver.download_export(project, project_path)
+            archiver.download_repository_archive(project, project_path)
+        except Exception as e:
+            log.error(f"Error processing {project['name']}: {e}")
+    
     log.info("Done!")
+
+
+if __name__ == "__main__":
+    main()
