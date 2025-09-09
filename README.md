@@ -355,6 +355,156 @@ poetry run python -m git_archiver config --cleanup exports/github
 poetry run python -m git_archiver github --max-archives 2 --max-age-days 7
 ```
 
+## Automation with Cron
+
+You can automate the archiving process using cron jobs. Here are some examples:
+
+### Basic Cron Setup
+
+```bash
+# Edit your crontab
+crontab -e
+
+# Add entries for automated archiving
+```
+
+### Example Cron Entries
+
+```bash
+# Archive GitHub repositories daily at 2 AM
+0 2 * * * cd /path/to/git-archiver && /usr/local/bin/poetry run python -m git_archiver github >> /var/log/git-archiver-github.log 2>&1
+
+# Archive GitLab repositories weekly on Sundays at 3 AM
+0 3 * * 0 cd /path/to/git-archiver && /usr/local/bin/poetry run python -m git_archiver gitlab >> /var/log/git-archiver-gitlab.log 2>&1
+
+# Clean up old archives daily at 1 AM
+0 1 * * * cd /path/to/git-archiver && /usr/local/bin/poetry run python -m git_archiver config --cleanup /path/to/exports >> /var/log/git-archiver-cleanup.log 2>&1
+
+# Monthly retention summary report (first day of month at 6 AM)
+0 6 1 * * cd /path/to/git-archiver && /usr/local/bin/poetry run python -m git_archiver config --retention-summary /path/to/exports >> /var/log/git-archiver-summary.log 2>&1
+```
+
+### Advanced Cron Setup with Environment Variables
+
+Create a script for better environment management:
+
+```bash
+# Create /path/to/git-archiver/scripts/archive-github.sh
+#!/bin/bash
+set -e
+
+# Set environment variables
+export GITHUB_API_TOKEN="your_github_token"
+export GITHUB_ORG_NAME="your_organization"
+export GIT_ARCHIVER_CONFIG="/path/to/git-archiver/production-config.json"
+
+# Change to project directory
+cd /path/to/git-archiver
+
+# Run archiver with custom retention for production
+/usr/local/bin/poetry run python -m git_archiver github \
+    --max-archives 10 \
+    --max-age-days 90 \
+    --min-free-space 50 \
+    --log-level INFO
+
+# Check if cleanup is needed
+/usr/local/bin/poetry run python -m git_archiver config \
+    --retention-summary exports/github
+```
+
+```bash
+# Make script executable
+chmod +x /path/to/git-archiver/scripts/archive-github.sh
+
+# Add to crontab
+0 2 * * * /path/to/git-archiver/scripts/archive-github.sh >> /var/log/git-archiver.log 2>&1
+```
+
+### Cron Schedule Examples
+
+| Schedule | Cron Expression | Description |
+|----------|----------------|-------------|
+| Daily at 2 AM | `0 2 * * *` | Good for active repositories |
+| Weekly on Sunday at 3 AM | `0 3 * * 0` | Good for less active repositories |
+| Monthly on 1st at 4 AM | `0 4 1 * *` | Good for archival purposes |
+| Every 6 hours | `0 */6 * * *` | For critical repositories |
+| Weekdays at 6 PM | `0 18 * * 1-5` | Business hours archiving |
+
+### Production Considerations
+
+1. **Logging**: Always redirect output to log files for monitoring
+2. **Error Handling**: Use scripts with proper error handling
+3. **Notifications**: Consider adding email notifications for failures
+4. **Resource Management**: Schedule during low-usage periods
+5. **Monitoring**: Set up log rotation and monitoring alerts
+
+### Example Production Script
+
+```bash
+#!/bin/bash
+# /path/to/git-archiver/scripts/production-archive.sh
+
+set -e
+
+# Configuration
+PROJECT_DIR="/path/to/git-archiver"
+LOG_DIR="/var/log/git-archiver"
+CONFIG_FILE="$PROJECT_DIR/production-config.json"
+NOTIFICATION_EMAIL="admin@company.com"
+
+# Ensure log directory exists
+mkdir -p "$LOG_DIR"
+
+# Function to send notification on failure
+notify_failure() {
+    echo "Git Archiver failed at $(date)" | mail -s "Git Archiver Failure" "$NOTIFICATION_EMAIL"
+}
+
+# Trap errors
+trap notify_failure ERR
+
+# Change to project directory
+cd "$PROJECT_DIR"
+
+# Archive GitHub repositories
+echo "Starting GitHub archive at $(date)"
+poetry run python -m git_archiver github \
+    --config-file "$CONFIG_FILE" \
+    --max-archives 15 \
+    --max-age-days 60 \
+    --min-free-space 100
+
+# Archive GitLab repositories (if configured)
+if grep -q '"gitlab"' "$CONFIG_FILE"; then
+    echo "Starting GitLab archive at $(date)"
+    poetry run python -m git_archiver gitlab \
+        --config-file "$CONFIG_FILE" \
+        --max-archives 15 \
+        --max-age-days 60 \
+        --min-free-space 100
+fi
+
+# Generate summary report
+echo "Generating retention summary at $(date)"
+poetry run python -m git_archiver config \
+    --config-file "$CONFIG_FILE" \
+    --retention-summary exports
+
+echo "Archive completed successfully at $(date)"
+```
+
+### Monitoring and Alerting
+
+```bash
+# Add to crontab for monitoring
+# Check for failed archives and send alerts
+*/30 * * * * if tail -n 100 /var/log/git-archiver.log | grep -q "ERROR\|FAILED"; then echo "Git Archiver errors detected" | mail -s "Git Archiver Alert" admin@company.com; fi
+
+# Weekly disk space report
+0 9 * * 1 df -h /path/to/exports | mail -s "Weekly Archive Disk Usage" admin@company.com
+```
+
 ## License
 
 [Add your license information here]
