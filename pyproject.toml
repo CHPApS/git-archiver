@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "git-archiver"
-version = "0.1.4"
+version = "0.2.0"
 description = ""
 authors = ["Maarten Winter <maaw@ipu.dk>", "Jorrit Wronski <jowr@ipu.dk>", "Albert Seligmann <ase@ipu.dk>"]
 readme = "README.md"
@@ -9,6 +9,7 @@ readme = "README.md"
 python = ">=3.11, <3.14"
 python-gitlab = "^6.1.0"
 pyinstaller = "^6.0.0"
+requests = "^2.32.5"
 
 
 [build-system]
