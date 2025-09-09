@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from typing import Dict, Any, List, TYPE_CHECKING
+from typing import Dict, Any, List, TYPE_CHECKING, Optional
 from .base_archiver import BaseArchiver
 
 try:
@@ -20,13 +20,14 @@ class GitLabArchiver(BaseArchiver):
     GitLab-specific archiver that extends BaseArchiver with GitLab API functionality.
     """
     
-    def __init__(self, access_token: str, gitlab_url: str = "https://gitlab.com"):
+    def __init__(self, access_token: str, gitlab_url: str = "https://gitlab.com", config: Optional[Dict[str, Any]] = None):
         """
         Initialize the GitLab archiver.
         
         Args:
             access_token: GitLab API token with appropriate scopes
             gitlab_url: GitLab instance URL (default: https://gitlab.com)
+            config: Configuration dictionary for archive management
         """
         if not GITLAB_AVAILABLE:
             raise ImportError(
@@ -34,7 +35,7 @@ class GitLabArchiver(BaseArchiver):
                 "Install it with: poetry add python-gitlab"
             )
         
-        super().__init__("gitlab")
+        super().__init__("gitlab", config)
         self.access_token = access_token
         self.gitlab_url = gitlab_url
         self.gl: 'Gitlab' = None  # type: ignore
@@ -215,8 +216,8 @@ def main(config=None, args=None):
     if dry_run:
         log.info("DRY RUN MODE - No actual operations will be performed")
     
-    # Initialize archiver
-    archiver = GitLabArchiver(access_token, gitlab_url)
+    # Initialize archiver with configuration
+    archiver = GitLabArchiver(access_token, gitlab_url, config.config)
     
     log.info("-" * 80)
     log.info(f"Authenticating to GitLab at {gitlab_url}...")
@@ -236,6 +237,14 @@ def main(config=None, args=None):
         print(f"  {project['name_with_namespace']} ({project['id']})")
     
     log.info("-" * 80)
+    
+    # Show retention summary if archive manager is available
+    if archiver.archive_manager:
+        summary = archiver.get_retention_summary(export_path)
+        if summary:
+            log.info(f"Current archives: {summary['total_archives']} files, {summary['total_size_mb']:.1f}MB")
+            log.info(f"Disk space: {summary['disk_usage']['free_gb']:.1f}GB free")
+    
     i = 0
     total = len(projects)
     digits = len(str(total))
@@ -257,13 +266,21 @@ def main(config=None, args=None):
         
         # Create directory using configured export path
         project_path = os.path.join(export_path, project['name_with_namespace'])
-        archiver.ensure_directory_exists(project_path)
+        
+        # Prepare directory with rotation if enabled
+        archiver.prepare_download_directory(project_path, dry_run)
         log.info(f"  Exporting to {project_path}")
         
         # Download export and repository archive
         try:
-            archiver.download_export(project, project_path)
-            archiver.download_repository_archive(project, project_path)
+            if not dry_run:
+                archiver.download_export(project, project_path)
+                archiver.download_repository_archive(project, project_path)
+                
+                # Perform post-download cleanup if configured
+                archiver.cleanup_after_download(project_path, dry_run)
+            else:
+                log.info("  DRY RUN: Would download export and repository archive")
         except Exception as e:
             log.error(f"Error processing {project['name']}: {e}")
         

@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 from typing import Optional
 from .config import ConfigManager
@@ -141,6 +142,18 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
         choices=['github', 'gitlab'],
         help='Validate configuration for specified platform'
     )
+    
+    config_group.add_argument(
+        '--cleanup',
+        metavar='PATH',
+        help='Clean up old archives in specified directory'
+    )
+    
+    config_group.add_argument(
+        '--retention-summary',
+        metavar='PATH',
+        help='Show retention summary for specified directory'
+    )
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -169,6 +182,45 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
         action='store_true',
         help='Enable verbose output'
     )
+    
+    common_group.add_argument(
+        '--no-rotation',
+        action='store_true',
+        help='Disable archive rotation for this run'
+    )
+    
+    # Retention policy arguments
+    retention_group = parser.add_argument_group('Archive Retention')
+    
+    retention_group.add_argument(
+        '--max-archives',
+        type=int,
+        help='Maximum number of archives to keep per repository (overrides config)'
+    )
+    
+    retention_group.add_argument(
+        '--max-age-days',
+        type=int,
+        help='Maximum age of archives in days (overrides config)'
+    )
+    
+    retention_group.add_argument(
+        '--min-free-space',
+        type=float,
+        help='Minimum free disk space in GB before cleanup (overrides config)'
+    )
+    
+    retention_group.add_argument(
+        '--cleanup-threshold',
+        type=float,
+        help='Disk space threshold in GB for aggressive cleanup (overrides config)'
+    )
+    
+    retention_group.add_argument(
+        '--force-cleanup',
+        action='store_true',
+        help='Force cleanup regardless of disk space'
+    )
 
 
 def _add_global_arguments(parser: argparse.ArgumentParser) -> None:
@@ -177,8 +229,8 @@ def _add_global_arguments(parser: argparse.ArgumentParser) -> None:
     
     global_group.add_argument(
         '--config-file',
-        default='config.json',
-        help='Path to configuration file (default: config.json)'
+        default=None,
+        help='Path to configuration file (default: config.json, or GIT_ARCHIVER_CONFIG env var)'
     )
 
 
@@ -260,6 +312,41 @@ def handle_config_commands(args: argparse.Namespace, config: ConfigManager) -> b
             sys.exit(1)
         return True
     
+    if args.cleanup:
+        from .archive_manager import ArchiveManager
+        archive_manager = ArchiveManager(config.config)
+        
+        print(f"Cleaning up archives in: {args.cleanup}")
+        result = archive_manager.cleanup_archives(args.cleanup, dry_run=False)
+        
+        print(f"Cleanup completed:")
+        print(f"  - Removed {result['removed_count']} files")
+        print(f"  - Freed {result['freed_space_mb']:.1f}MB")
+        print(f"  - Status: {result['status']}")
+        return True
+    
+    if args.retention_summary:
+        from .archive_manager import ArchiveManager
+        archive_manager = ArchiveManager(config.config)
+        
+        summary = archive_manager.get_retention_summary(args.retention_summary)
+        
+        print(f"Retention Summary for: {args.retention_summary}")
+        print(f"  Total Archives: {summary['total_archives']}")
+        print(f"  Total Repositories: {summary['total_repositories']}")
+        print(f"  Total Size: {summary['total_size_mb']:.1f}MB")
+        print(f"  Oldest Archive: {summary['oldest_archive_days']:.1f} days")
+        print(f"  Newest Archive: {summary['newest_archive_days']:.1f} days")
+        print(f"  Disk Usage: {summary['disk_usage']['used_gb']:.1f}GB used, {summary['disk_usage']['free_gb']:.1f}GB free")
+        print(f"  Low Space Warning: {'Yes' if summary['disk_usage']['low_space'] else 'No'}")
+        
+        print(f"\nRetention Configuration:")
+        print(f"  Max Archives per Repo: {summary['retention_config']['max_archives_per_repo']}")
+        print(f"  Max Age: {summary['retention_config']['max_age_days']} days")
+        print(f"  Min Free Space: {summary['retention_config']['min_free_space_gb']}GB")
+        print(f"  Rotation Enabled: {summary['retention_config']['enable_rotation']}")
+        return True
+    
     # If no specific config command, show help
     print("No configuration command specified. Use --help for available options.")
     return True
@@ -278,11 +365,24 @@ def parse_arguments(argv: Optional[list] = None) -> tuple[argparse.Namespace, Co
     parser = create_argument_parser()
     args = parser.parse_args(argv)
     
+    # Determine config file path with priority:
+    # 1. Command line argument
+    # 2. Environment variable
+    # 3. Default
+    config_file = args.config_file
+    if config_file is None:
+        config_file = os.environ.get('GIT_ARCHIVER_CONFIG', 'config.json')
+    
     # Initialize configuration manager
-    config = ConfigManager(args.config_file)
+    config = ConfigManager(config_file)
     
     # Apply CLI overrides
     config.apply_cli_overrides(args)
+    
+    # Handle rotation override
+    if hasattr(args, 'no_rotation') and args.no_rotation:
+        config.set('retention.enable_rotation', False)
+        logging.getLogger().warning("Archive rotation disabled for this run")
     
     # Setup logging
     platform = args.platform if hasattr(args, 'platform') and args.platform else 'git_archiver'

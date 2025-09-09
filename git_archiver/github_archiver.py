@@ -12,15 +12,16 @@ class GitHubArchiver(BaseArchiver):
     GitHub-specific archiver that extends BaseArchiver with GitHub API functionality.
     """
     
-    def __init__(self, access_token: str, org_name: str):
+    def __init__(self, access_token: str, org_name: str, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the GitHub archiver.
         
         Args:
             access_token: GitHub API token with appropriate scopes
             org_name: GitHub organization name
+            config: Configuration dictionary for archive management
         """
-        super().__init__("github")
+        super().__init__("github", config)
         self.access_token = access_token
         self.org_name = org_name
         self.headers = {
@@ -309,13 +310,22 @@ def main(config=None, args=None):
     if dry_run:
         log.info("DRY RUN MODE - No actual operations will be performed")
     
-    # Initialize archiver
-    archiver = GitHubArchiver(access_token, org_name)
+    # Initialize archiver with configuration
+    archiver = GitHubArchiver(access_token, org_name, config.config)
     
     # Use configured export path
     full_export_path = export_path
-    archiver.ensure_directory_exists(full_export_path)
+    
+    # Prepare directory with rotation if enabled
+    archiver.prepare_download_directory(full_export_path, dry_run)
     log.info(f"Export path: {full_export_path}")
+    
+    # Show retention summary if archive manager is available
+    if archiver.archive_manager:
+        summary = archiver.get_retention_summary(full_export_path)
+        if summary:
+            log.info(f"Current archives: {summary['total_archives']} files, {summary['total_size_mb']:.1f}MB")
+            log.info(f"Disk space: {summary['disk_usage']['free_gb']:.1f}GB free")
     
     # Get repositories
     repos = []
@@ -377,6 +387,10 @@ def main(config=None, args=None):
         # Ensure all repositories are unlocked
         for repo in repos:
             archiver.unlock_repository(repo)
+        
+        # Perform post-download cleanup if configured
+        if not dry_run:
+            archiver.cleanup_after_download(full_export_path, dry_run)
     
     log.info("Done!")
 

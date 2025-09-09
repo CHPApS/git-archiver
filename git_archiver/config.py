@@ -79,6 +79,15 @@ class ConfigManager:
                     "repository_format": "repository_archive_{name}_{id}_{sha}",
                     "sanitize_names": True
                 }
+            },
+            "retention": {
+                "enable_rotation": True,
+                "max_archives_per_repo": 5,
+                "max_age_days": 30,
+                "min_free_space_gb": 10,
+                "cleanup_threshold_gb": 5,
+                "cleanup_before_download": True,
+                "cleanup_after_download": False
             }
         }
     
@@ -167,6 +176,12 @@ class ConfigManager:
             # General CLI args
             "log_level": ("logging", "level"),
             "export_path": ("archive", "base_export_path"),
+            
+            # Retention CLI args
+            "max_archives": ("retention", "max_archives_per_repo"),
+            "max_age_days": ("retention", "max_age_days"),
+            "min_free_space": ("retention", "min_free_space_gb"),
+            "cleanup_threshold": ("retention", "cleanup_threshold_gb"),
         }
         
         for arg_name, (section, key) in cli_mappings.items():
@@ -181,6 +196,12 @@ class ConfigManager:
                     f"Configuration override: {section}.{key} changed from '{old_value}' to '{value}' "
                     f"by command line argument --{arg_name.replace('_', '-')}"
                 )
+        
+        # Handle special retention flags
+        if hasattr(args, 'force_cleanup') and args.force_cleanup:
+            self._set_nested_value(self.config, "retention", "cleanup_threshold_gb", 999999)  # Force cleanup
+            self.overrides["retention.cleanup_threshold_gb"] = "CLI argument --force-cleanup"
+            self.log.warning("Forced cleanup enabled - will clean up regardless of disk space")
     
     def get(self, key: str, default: Any = None) -> Any:
         """

@@ -29,5 +29,14 @@
       "repository_format": "repository_archive_{name}_{id}_{sha}",
       "sanitize_names": true
     }
+  },
+  "retention": {
+    "enable_rotation": true,
+    "max_archives_per_repo": 5,
+    "max_age_days": 30,
+    "min_free_space_gb": 10,
+    "cleanup_threshold_gb": 5,
+    "cleanup_before_download": true,
+    "cleanup_after_download": false
   }
 }
